@@ -50,8 +50,10 @@ SHOW_ID_REGEXPS = (
     r'(tmdb)\.org/./tv/(\d+)',                            # TMDB_http_link
     r'(imdb)\.com/.+/(tt\d+)',                            # IMDB_http_link
     r'(thetvdb)\.com.+&id=(\d+)',                         # TheTVDB_http_link
-    r'(thetvdb)\.com/.*?series/(\d+)',                    # TheTVDB_http_link
+    r'(thetvdb)\.com/series/(\d+)',                       # TheTVDB_http_link
+    r'(thetvdb)\.com/api/.*series/(\d+)',                 # TheTVDB_http_link
     r'(thetvdb)\.com/.*?"id":(\d+)',                      # TheTVDB_http_link
+    r'<uniqueid.+?type="(tvdb|imdb)".*?>([t\d]+?)</uniqueid>'
 )
 
 
@@ -136,7 +138,7 @@ def _set_unique_ids(ext_ids, list_item):
 
 
 def _set_rating(the_info, list_item, episode=False):
-    # type: (InfoType, ListItem) -> ListItem
+    # type: (InfoType, ListItem, bool) -> ListItem
     """Set show/episode rating"""
     first = True
     for rating_type in settings.RATING_TYPES:
@@ -181,6 +183,10 @@ def _add_season_info(show_info, list_item):
 
 
 def get_image_urls(image):
+    # type: (Dict) -> Tuple[Text, Text]
+    """Get image URLs from image information"""
+    if image.get('file_path', '').endswith('.svg'):
+        return None, None
     if image.get('type') == 'fanarttv':
         theurl = image['file_path']
         previewurl = theurl.replace(
@@ -198,27 +204,26 @@ def set_show_artwork(show_info, list_item):
         if image_type == 'backdrops':
             fanart_list = []
             for image in image_list:
-                if image.get('type') == 'fanarttv':
-                    theurl = image['file_path']
-                else:
-                    theurl = settings.IMAGEROOTURL + image['file_path']
-                if image.get('iso_639_1') != None and settings.CATLANDSCAPE:
-                    theurl, previewurl = get_image_urls(image)
+                theurl, previewurl = get_image_urls(image)
+                if image.get('iso_639_1') != None and settings.CATLANDSCAPE and theurl:
                     list_item.addAvailableArtwork(
                         theurl, art_type="landscape", preview=previewurl)
-                else:
+                elif theurl:
                     fanart_list.append({'image': theurl})
             if fanart_list:
                 list_item.setAvailableFanart(fanart_list)
         else:
             if image_type == 'posters':
                 destination = 'poster'
+            elif image_type == 'logos':
+                destination = 'clearlogo'
             else:
                 destination = image_type
             for image in image_list:
                 theurl, previewurl = get_image_urls(image)
-                list_item.addAvailableArtwork(
-                    theurl, art_type=destination, preview=previewurl)
+                if theurl:
+                    list_item.addAvailableArtwork(
+                        theurl, art_type=destination, preview=previewurl)
     return list_item
 
 
@@ -324,8 +329,11 @@ def add_episode_info(list_item, episode_info, full_info=True):
             video['plot'] = video['plotoutline'] = _clean_plot(summary)
         if safe_get(episode_info, 'air_date') is not None:
             video['premiered'] = episode_info['air_date']
+        duration = episode_info.get('runtime')
+        if duration:
+            video['duration'] = int(duration) * 60
         list_item = _set_cast(
-            episode_info['credits']['guest_stars'], list_item)
+            episode_info['season_cast'] + episode_info['credits']['guest_stars'], list_item)
         ext_ids = {'tmdb_id': episode_info['id']}
         ext_ids.update(episode_info.get('external_ids', {}))
         list_item = _set_unique_ids(ext_ids, list_item)
@@ -400,7 +408,7 @@ def parse_media_id(title):
     elif title.startswith('imdb/tt') and title[7:].isdigit():
         # IMDB ID works alone because it is clear
         return {'type': 'imdb_id', 'title': title[5:]}
-    elif title.startswith('tmdb/') and title[5:].isdigit():  # TVDB ID
+    elif title.startswith('tmdb/') and title[5:].isdigit():  # TMDB ID
         return {'type': 'tmdb_id', 'title': title[5:]}
     elif title.startswith('tvdb/') and title[5:].isdigit():  # TVDB ID
         return {'type': 'tvdb_id', 'title': title[5:]}
